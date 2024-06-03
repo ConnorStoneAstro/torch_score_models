@@ -11,6 +11,8 @@ from .simple_models import (
     SampleScoreModel,
     AnnealedScoreModel,
     ConvolvedLikelihood,
+    PriorNormalScoreModel,
+    SpotlightScoreModel,
 )
 
 __all__ = (
@@ -37,4 +39,6 @@ __all__ = (
     "SampleScoreModel",
     "AnnealedScoreModel",
     "ConvolvedLikelihood",
+    "PriorNormalScoreModel",
+    "SpotlightScoreModel",
 )
