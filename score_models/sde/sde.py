@@ -30,6 +30,12 @@ class SDE(ABC):
         ...
 
     @abstractmethod
+    def t_sigma(self, sigma: Tensor) -> Tensor:
+        """inverse of the perturbation kernel standard deviation. Should give
+        the time at which the kernel has standard deviation sigma."""
+        ...
+
+    @abstractmethod
     def mu(self, t: Tensor) -> Tensor:
         """perturbation kernel mean"""
         ...

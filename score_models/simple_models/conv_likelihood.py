@@ -1,4 +1,6 @@
+from typing import Callable, Union
 import torch
+from torch import Tensor
 import torch.nn as nn
 from torch import vmap
 from torch.func import grad
@@ -42,6 +44,73 @@ class ConvolvedLikelihood(nn.Module):
         sigma = torch.inverse(self.sigma_y + self.sde.sigma(t) ** 2 * self.AAT)
         ll = 0.5 * (r @ sigma @ r.reshape(1, r.shape[0]).T)
         return ll.unsqueeze(0) * self.sde.sigma(t)
+
+
+class ExactConvolvedLikelihood(nn.Module):
+    def __init__(
+        self,
+        sde,
+        y: Tensor,
+        sigma_y: Tensor,
+        priormodel,
+        A: Union[Tensor, Callable] = None,
+        AAT: Tensor = None,
+        ATS1y: Tensor = None,
+        ATS1A: Tensor = None,
+    ):
+        super().__init__()
+        self.sde = sde
+        self.y = y
+        self.sigma_y = sigma_y
+        self.A = A
+        self.priormodel = priormodel
+        if AAT is None:
+            self.AAT = A @ A.T
+        else:
+            self.AAT = AAT
+        if ATS1y is None:
+            if sigma_y.shape == y.shape:
+                self.ATS1y = A.T @ (y / sigma_y)
+            else:
+                self.ATS1y = A.T @ torch.linalg.inv(sigma_y) @ y
+        else:
+            self.ATS1y = ATS1y
+        if ATS1A is None:
+            if sigma_y.shape == y.shape:
+                ATS1A = A.T @ torch.diag(1 / sigma_y) @ A
+            else:
+                ATS1A = A.T @ torch.linalg.inv(sigma_y) @ A
+            self.ATS1A = torch.max(torch.diag(ATS1A))
+        if sigma_y.shape == y.shape:
+            assert AAT.shape == y.shape, "AAT must have the same shape as y"
+        self.hyperparameters = {"nn_is_energy": True}
+
+    def conv_like(self, t, xt):
+        if isinstance(self.A, torch.Tensor):
+            r = self.y - self.A @ xt
+        else:
+            r = self.y - self.A(xt)
+        sigma = self.sigma_y + self.sde.sigma(t) ** 2 * self.AAT
+        if sigma.shape == self.y.shape:
+            ll = 0.5 * torch.sum(r**2 / sigma)
+        else:
+            ll = 0.5 * (r @ torch.linalg.inv(sigma) @ r.reshape(1, r.shape[0]).T)
+        return ll
+
+    def prior_score(self, t, xt):
+        sigma_t = self.sde.sigma(t)
+        sigma_c = sigma_t**2 * self.ATS1A / (sigma_t**2 + self.ATS1A)
+        x_c = sigma_c * (self.ATS1y + xt / sigma_t**2)
+        t_c = self.sde.t_sigma(torch.sqrt(sigma_c)) * torch.ones_like(t)
+        return self.priormodel(t_c, x_c) * self.ATS1A / (sigma_t**2 + self.ATS1A)
+
+    def forward(self, t, xt, **kwargs):
+
+        likelihood_score = vmap(grad(self.conv_like, argnums=1))(t, xt)
+
+        prior_score = self.prior_score(t, xt)
+
+        return (likelihood_score + prior_score) * self.sde.sigma(t[0])
 
 
 class PriorNormalScoreModel(nn.Module):

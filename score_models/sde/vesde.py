@@ -2,6 +2,7 @@ import torch
 from .sde import SDE
 from torch import Tensor
 import numpy as np
+from score_models.utils import DEVICE
 
 
 class VESDE(SDE):
@@ -21,6 +22,11 @@ class VESDE(SDE):
 
     def sigma(self, t: Tensor) -> Tensor:
         return self.sigma_min * (self.sigma_max / self.sigma_min) ** (t / self.t_max)
+
+    def t_sigma(self, sigma: Tensor) -> Tensor:
+        return torch.log(torch.as_tensor(sigma / self.sigma_min, device=DEVICE)) / torch.log(
+            torch.as_tensor(self.sigma_max / self.sigma_min, device=DEVICE)
+        )
 
     def mu(self, t: Tensor) -> Tensor:
         return torch.ones_like(t)
