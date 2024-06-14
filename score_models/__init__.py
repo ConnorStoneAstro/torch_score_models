@@ -12,7 +12,8 @@ from .simple_models import (
     AnnealedScoreModel,
     ConvolvedLikelihood,
     PriorNormalScoreModel,
-    ExactConvolvedLikelihood,
+    ConvolvedPriorApproximation,
+    GaussianPriorApproximation,
     SpotlightScoreModel,
 )
 
@@ -41,6 +42,7 @@ __all__ = (
     "AnnealedScoreModel",
     "ConvolvedLikelihood",
     "PriorNormalScoreModel",
-    "ExactConvolvedLikelihood",
+    "ConvolvedPriorApproximation",
+    "GaussianPriorApproximation",
     "SpotlightScoreModel",
 )
