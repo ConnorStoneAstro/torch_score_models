@@ -67,7 +67,7 @@ class ConvolvedPriorApproximation(nn.Module):
         AAT: Tensor = None,
         ATS1A: Tensor = None,
         A1y: Tensor = None,
-        N_ATS1A: int = 1000,
+        convpriorversion=1,
     ):
         super().__init__()
         self.sde = sde
@@ -86,13 +86,6 @@ class ConvolvedPriorApproximation(nn.Module):
             self.AAT = AAT
         if ATS1A is None:
             if Sigma_y.shape == y.shape:
-                # M = np.random.choice(np.prod(self.x_shape), N_ATS1A, replace=False)
-                # M = np.sort(M)
-                # subA = self.A[:, M]
-                # S1 = torch.diag(1 / Sigma_y.reshape(-1))
-                # ATS1A = subA.T @ (S1 @ subA)
-
-                # Just compute the diagonal of A^TS^{-1}A
                 ATS1A = torch.sum(self.A**2 / Sigma_y.reshape(-1, 1), dim=0)
                 self.ATS1A = torch.min(ATS1A)
             else:
@@ -107,6 +100,21 @@ class ConvolvedPriorApproximation(nn.Module):
         if Sigma_y.shape == y.shape:
             assert AAT.shape == y.shape, "AAT must have the same shape as y"
         self.hyperparameters = {"nn_is_energy": True}
+        self.convpriorversion = convpriorversion
+
+    @property
+    def convpriorversion(self):
+        return self._convpriorversion
+
+    @convpriorversion.setter
+    def convpriorversion(self, value):
+        self._convpriorversion = value
+        if value == 1:
+            self.prior_score = self.prior_score_v1
+        elif value == 2:
+            self.prior_score = self.prior_score_v2
+        else:
+            raise ValueError("convpriorversion must be 1 or 2")
 
     def conv_like(self, t, xt):
         if isinstance(self.A, torch.Tensor):
@@ -124,12 +132,18 @@ class ConvolvedPriorApproximation(nn.Module):
         r = self.A1y - xt
         return r / (1 / self.ATS1A + self.sde.sigma(t[0]) ** 2)
 
-    def prior_score(self, t, xt):
+    def prior_score_v1(self, t, xt):
         sigma_t = self.sde.sigma(t[0])
         sigma_c2 = sigma_t**2 / (self.ATS1A * (sigma_t**2 + 1 / self.ATS1A))
         x_c = sigma_c2 * ((self.ATS1A * self.A1y).reshape(1, *self.x_shape) + xt / sigma_t**2)
-        # t_c = self.sde.t_sigma(torch.sqrt(sigma_c2)) * torch.ones_like(t)
-        return self.priormodel.score(t, x_c)  # / (self.ATS1A * (sigma_t**2 + 1 / self.ATS1A))
+        t_c = self.sde.t_sigma(torch.sqrt(sigma_c2)) * torch.ones_like(t)
+        return self.priormodel.score(t_c, x_c) / (self.ATS1A * (sigma_t**2 + 1 / self.ATS1A))
+
+    def prior_score_v2(self, t, xt):
+        sigma_t = self.sde.sigma(t[0])
+        sigma_c2 = sigma_t**2 / (self.ATS1A * (sigma_t**2 + 1 / self.ATS1A))
+        x_c = sigma_c2 * ((self.ATS1A * self.A1y).reshape(1, *self.x_shape) + xt / sigma_t**2)
+        return self.priormodel.score(t, x_c) * torch.sqrt(sigma_c2) / sigma_t
 
     @torch.no_grad()
     def forward(self, t, xt, **kwargs):
