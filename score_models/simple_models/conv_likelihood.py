@@ -128,8 +128,8 @@ class ConvolvedPriorApproximation(nn.Module):
         sigma_t = self.sde.sigma(t[0])
         sigma_c2 = sigma_t**2 / (self.ATS1A * (sigma_t**2 + 1 / self.ATS1A))
         x_c = sigma_c2 * ((self.ATS1A * self.A1y).reshape(1, *self.x_shape) + xt / sigma_t**2)
-        t_c = self.sde.t_sigma(torch.sqrt(sigma_c2)) * torch.ones_like(t)
-        return self.priormodel.score(t_c, x_c) / (self.ATS1A * (sigma_t**2 + 1 / self.ATS1A))
+        # t_c = self.sde.t_sigma(torch.sqrt(sigma_c2)) * torch.ones_like(t)
+        return self.priormodel.score(t, x_c)  # / (self.ATS1A * (sigma_t**2 + 1 / self.ATS1A))
 
     @torch.no_grad()
     def forward(self, t, xt, **kwargs):
