@@ -67,9 +67,7 @@ class ConvolvedPriorApproximation(nn.Module):
         AAT: Tensor = None,
         ATS1A: Tensor = None,
         A1y: Tensor = None,
-        ATS1y: Tensor = None,
-        convpriorversion=1,
-        gauss_approx_time=0.4,
+        gauss_approx_time=1.1,
     ):
         super().__init__()
         self.sde = sde
@@ -77,8 +75,7 @@ class ConvolvedPriorApproximation(nn.Module):
         self.y_shape = y.shape
         self.x_shape = x_shape
         self.Sigma_y = Sigma_y
-        self.convpriorversion = convpriorversion
-        self.gauss_approx_time = gauss_approx_time if convpriorversion == 1 else 2.0
+        self.gauss_approx_time = gauss_approx_time
         if isinstance(A, torch.Tensor):
             self.A = A.reshape(np.prod(self.y_shape), np.prod(x_shape))
         else:
@@ -90,25 +87,13 @@ class ConvolvedPriorApproximation(nn.Module):
             self.AAT = AAT
         if ATS1A is None:
             if Sigma_y.shape == y.shape:
-                if self.convpriorversion == 1:
-                    ATS1A = torch.sum(self.A**2 / Sigma_y.reshape(-1, 1), dim=0)
-                    self.ATS1A = torch.min(ATS1A)
-                else:
-                    self.ATS1A = self.A.T @ (self.A / Sigma_y.reshape(-1, 1))
+                ATS1A = torch.sum(self.A**2 / Sigma_y.reshape(-1, 1), dim=0)
+                self.ATS1A = torch.min(ATS1A)
             else:
                 self.ATS1A = self.A.T @ torch.linalg.inv(Sigma_y) @ self.A
-                if self.convpriorversion == 1:
-                    self.ATS1A = torch.min(torch.diag(self.ATS1A))
+                self.ATS1A = torch.min(torch.diag(self.ATS1A))
         else:
             self.ATS1A = ATS1A
-        print("ATS1y", ATS1y, isinstance(A, torch.Tensor))
-        if ATS1y is None and isinstance(A, torch.Tensor):
-            if Sigma_y.shape == y.shape:
-                self.ATS1y = self.A.T @ (y / Sigma_y).reshape(-1)
-            else:
-                self.ATS1y = self.A.T @ torch.linalg.inv(Sigma_y) @ y.reshape(-1)
-        else:
-            self.ATS1y = ATS1y
         if A1y is None:
             self.A1y = (torch.linalg.inv(self.A) @ y.reshape(-1)).reshape(*self.x_shape)
         else:
@@ -116,20 +101,6 @@ class ConvolvedPriorApproximation(nn.Module):
         if Sigma_y.shape == y.shape:
             assert AAT.shape == y.shape, "AAT must have the same shape as y"
         self.hyperparameters = {"nn_is_energy": True}
-
-    @property
-    def convpriorversion(self):
-        return self._convpriorversion
-
-    @convpriorversion.setter
-    def convpriorversion(self, value):
-        self._convpriorversion = value
-        if value == 1:
-            self.prior_score = self.prior_score_v1
-        elif value == 2:
-            self.prior_score = self.prior_score_v2
-        else:
-            raise ValueError("convpriorversion must be 1 or 2")
 
     def conv_like(self, t, xt):
         if isinstance(self.A, torch.Tensor):
@@ -147,24 +118,12 @@ class ConvolvedPriorApproximation(nn.Module):
         r = self.A1y - xt
         return r / (1 / self.ATS1A + self.sde.sigma(t[0]) ** 2)
 
-    def prior_score_v1(self, t, xt):
+    def prior_score(self, t, xt):
         sigma_t = self.sde.sigma(t[0])
         sigma_c2 = sigma_t**2 / (self.ATS1A * (sigma_t**2 + 1 / self.ATS1A))
         x_c = sigma_c2 * ((self.ATS1A * self.A1y).reshape(1, *self.x_shape) + xt / sigma_t**2)
         t_c = self.sde.t_sigma(torch.sqrt(sigma_c2)) * torch.ones_like(t)
         return self.priormodel.score(t_c, x_c) / (self.ATS1A * (sigma_t**2 + 1 / self.ATS1A))
-
-    def prior_score_v2(self, t, xt):
-        B, *D = xt.shape
-        sigma_t = self.sde.sigma(t[0])
-        Sigma_c = torch.linalg.inv(self.ATS1A + torch.eye(self.ATS1A.shape[0]) / sigma_t**2)
-        L = torch.linalg.cholesky(Sigma_c)
-        x_c = torch.vmap(torch.matmul, in_dims=(None, 0))(
-            Sigma_c, (self.ATS1y + xt / sigma_t**2).reshape(B, -1)
-        ).reshape(*xt.shape)
-        return torch.vmap(torch.matmul, in_dims=(None, 0))(
-            L, self.priormodel.score(t, x_c).reshape(B, -1) / sigma_t
-        ).reshape(*xt.shape)
 
     @torch.no_grad()
     def forward(self, t, xt, **kwargs):
