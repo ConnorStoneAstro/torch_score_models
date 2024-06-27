@@ -39,7 +39,7 @@ class GaussianPriorApproximation(nn.Module):
             self.AAT = AAT
 
         if Sigma_y.shape == y.shape:
-            assert AAT.shape == y.shape, "AAT must have the same shape as y"
+            assert (AAT.shape == y.shape) or (AAT.numel() == 1), "AAT must have the same shape as y"
         self.hyperparameters = {"nn_is_energy": True}
 
     def conv_like(self, t, xt):

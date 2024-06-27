@@ -28,7 +28,9 @@ class ConvolvedLikelihood(nn.Module):
             self.AAT = self.A @ self.A.T
         else:
             self.AAT = AAT
-        assert self.Sigma_y.shape == self.AAT.shape, "Sigma_y and AAT must have the same shape"
+        assert (AAT.shape == y.shape) or (
+            AAT.numel() == 1
+        ), "Sigma_y and AAT must have the same shape"
         self.diag = diag
         self.hyperparameters = {"nn_is_energy": True}
 
@@ -99,7 +101,7 @@ class ConvolvedPriorApproximation(nn.Module):
         else:
             self.A1y = A1y
         if Sigma_y.shape == y.shape:
-            assert AAT.shape == y.shape, "AAT must have the same shape as y"
+            assert (AAT.shape == y.shape) or (AAT.numel() == 1), "AAT must have the same shape as y"
         self.hyperparameters = {"nn_is_energy": True}
 
     def conv_like(self, t, xt):
