@@ -3,7 +3,11 @@ from .annealed import AnnealedScoreModel
 from .mvg import MVGScoreModel
 from .grf import GRFScoreModel
 from .joint import JointScoreModel
-from .conv_likelihood import ConvolvedLikelihood, PriorNormalScoreModel, ConvolvedPriorApproximation
+from .conv_likelihood import (
+    ConvolvedLikelihood,
+    PriorNormalScoreModel,
+    ConvolvedPriorApproximation,
+)
 from .gaussianprior_approx import GaussianPriorApproximation
 from .spotlight import SpotlightScoreModel
 
