@@ -151,8 +151,8 @@ class ConvolvedPriorApproximation(nn.Module):
         AAT: Tensor = None,
         ATS1A: Tensor = None,
         ATS1y: Tensor = None,
-        approx_scale=1.0,
         gauss_approx_time=1.1,
+        gauss_approx_scale=1.0,
     ):
         super().__init__()
         self.sde = sde
@@ -161,6 +161,7 @@ class ConvolvedPriorApproximation(nn.Module):
         self.x_shape = x_shape
         self.Sigma_y = Sigma_y
         self.gauss_approx_time = gauss_approx_time
+        self.gauss_approx_scale = gauss_approx_scale
         if isinstance(A, torch.Tensor):
             self.A = A.reshape(np.prod(self.y_shape), np.prod(x_shape))
         else:
@@ -190,9 +191,7 @@ class ConvolvedPriorApproximation(nn.Module):
                 )
         else:
             self.ATS1y = ATS1y
-        if approx_scale != 1.0:
-            self.ATS1y = self.ATS1y * approx_scale
-            # self.ATS1A = self.ATS1A * approx_scale
+
         self.hyperparameters = {"nn_is_energy": True}
 
     def conv_like(self, t, xt):
@@ -208,7 +207,7 @@ class ConvolvedPriorApproximation(nn.Module):
         return ll
 
     def like_score(self, t, xt):
-        r = self.ATS1y - xt
+        r = self.ATS1y * self.gauss_approx_scale - xt
         return r / (1 / self.ATS1A + self.sde.sigma(t[0]) ** 2)
 
     def prior_score(self, t, xt):
