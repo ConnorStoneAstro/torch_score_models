@@ -7,6 +7,7 @@ from .conv_likelihood import (
     ConvolvedLikelihood,
     PriorNormalScoreModel,
     ConvolvedPriorApproximation,
+    ConvolvedPriorMinimumApproximation,
 )
 from .gaussianprior_approx import GaussianPriorApproximation
 from .spotlight import SpotlightScoreModel
@@ -20,6 +21,7 @@ __all__ = (
     "ConvolvedLikelihood",
     "PriorNormalScoreModel",
     "ConvolvedPriorApproximation",
+    "ConvolvedPriorMinimumApproximation",
     "GaussianPriorApproximation",
     "SpotlightScoreModel",
 )
