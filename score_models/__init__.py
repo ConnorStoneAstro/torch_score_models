@@ -14,6 +14,7 @@ from .simple_models import (
     PriorNormalScoreModel,
     ConvolvedPriorApproximation,
     ConvolvedPriorMinimumApproximation,
+    TweedieScoreModel,
     GaussianPriorApproximation,
     SpotlightScoreModel,
 )
@@ -45,6 +46,7 @@ __all__ = (
     "PriorNormalScoreModel",
     "ConvolvedPriorApproximation",
     "ConvolvedPriorMinimumApproximation",
+    "TweedieScoreModel",
     "GaussianPriorApproximation",
     "SpotlightScoreModel",
 )

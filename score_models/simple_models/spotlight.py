@@ -7,6 +7,8 @@ import numpy as np
 from ..ode import RK4_ODE
 from .conv_likelihood import PriorNormalScoreModel
 from ..score_model import ScoreModel
+import matplotlib.pyplot as plt
+from matplotlib.patches import Circle
 
 
 class SpotlightScoreModel(nn.Module):
@@ -28,21 +30,36 @@ class SpotlightScoreModel(nn.Module):
     """
 
     def __init__(
-        self, sde, priormodel, likelihood, t_sigma, N_live=1000, K=lambda t: 10, epsilon=0.5
+        self,
+        sde,
+        priormodel,
+        likelihood,
+        pilot_samples=None,
+        pilot_ll=None,
+        N_auto_pilot=1,
+        N_live=100,
+        K=lambda t: 10,
+        epsilon=0.5,
+        use_prodD=True,
     ):
         super().__init__()
         self.sde = sde
+        self.priormodel = priormodel
         self.priornormalmodel = ScoreModel(
-            sde=sde, model=PriorNormalScoreModel(sde=sde, priormodel=priormodel, t_sigma=t_sigma)
+            sde=sde, model=PriorNormalScoreModel(sde=sde, priormodel=priormodel)
         )
         self.solver = RK4_ODE(self.priornormalmodel)
         self.likelihood = likelihood
+        self.pilot_samples = pilot_samples  # P, *D
+        self.pilot_ll = pilot_ll  # P, 1
+        self.N_auto_pilot = N_auto_pilot
         self.hyperparameters = {"nn_is_energy": True}
         self.K = K
-        self.N_live = N_live
+        self.N_live = int(N_live)
         self.live_x0 = None
         self.live_ll = None
         self.epsilon = epsilon
+        self.use_prodD = use_prodD
 
     def check_convergence(self, ll, scores, t_scale, xt):
         B, K, *D = scores.shape
@@ -61,32 +78,12 @@ class SpotlightScoreModel(nn.Module):
         ll = ll / torch.sum(ll, dim=1, keepdim=True)
         full_score = torch.sum(scores * ll, dim=1)
         print(
-            torch.linalg.norm(
-                (sample_score - full_score) * t_scale**2, dim=tuple(range(1, len(D) + 1))
-            ),
-            scores.shape,
-            self.epsilon,
-            np.sqrt(np.prod(D)),
-            t_scale,
-            self.epsilon * np.sqrt(np.prod(D)) * t_scale,
-            torch.all(
-                torch.linalg.norm(
-                    (sample_score - full_score) * t_scale**2, dim=tuple(range(1, len(D) + 1))
-                )
-                < (self.epsilon * np.sqrt(np.prod(D)) * t_scale)
-            ),
             torch.sum(
                 torch.linalg.norm(
                     (sample_score - full_score) * t_scale**2, dim=tuple(range(1, len(D) + 1))
                 )
                 < (self.epsilon * np.sqrt(np.prod(D)) * t_scale)
-            ),
-            compare[
-                torch.linalg.norm(
-                    (sample_score - full_score) * t_scale**2, dim=tuple(range(1, len(D) + 1))
-                )
-                > (self.epsilon * np.sqrt(np.prod(D)) * t_scale)
-            ],
+            )
         )
         return torch.all(
             torch.linalg.norm(
@@ -114,62 +111,59 @@ class SpotlightScoreModel(nn.Module):
     #     return torch.all(sigma_v < self.epsilon * t_scale, dim=1)
 
     def spotlight_score(self, t, xt, tfloat, t_scale, live_x0, live_ll):
-        NN = int(15 * tfloat + 5)
-        K = self.K(tfloat)  # int(100 - 95 * tfloat)
+        K = self.K(tfloat)
         B, *D = xt.shape
-        # epsilon = t_scale * torch.randn(k, *xt.shape, dtype=xt.dtype, device=xt.device)
-        # x0 = self.solver.reverse(
-        #     xt + epsilon, N=NN, progress_bar=False, t_max=tfloat, xf=xt, sigma_f=t_scale
-        # )
-        # B, K, *D
+
         x0 = vmap(
             lambda xf: self.priornormalmodel.sample(
-                shape=(K, *xt.shape[1:]), N=100, xf=xf, sigma_f=t_scale, progress_bar=False
+                shape=(K, *xt.shape[1:]), N=50, xf=xf, sigma_f=t_scale, progress_bar=False
             ),
             randomness="different",
         )(
             xt
         )  # B, K, *D
-        ll = vmap(vmap(self.likelihood, in_dims=(None, 0)), in_dims=(None, 0))(t, x0)  # B, K, 1
+
+        ll = vmap(vmap(self.likelihood))(x0)  # B, K, 1
         current_x0 = torch.cat([live_x0, x0], dim=1)  # B, K+L, *D
 
         current_ll = torch.cat(
             [
                 live_ll,
                 ll
-                + 0.5
+                + (0.5 / t_scale**2)
                 * torch.sum(
-                    (x0 - xt.unsqueeze(1)) ** 2 / t_scale**2,
-                    dim=tuple(range(2, len(x0.shape))),
-                ).unsqueeze(-1)
-                + torch.log(t_scale),
+                    (x0 - xt.unsqueeze(1)) ** 2, dim=tuple(range(2, len(x0.shape))), keepdim=True
+                )
+                + torch.log(t_scale)
+                * (np.prod(D) if self.use_prodD else 0.0),  # fixme why not np.prod(D)?
             ],
             dim=1,
         )  # B, K+L, 1
+        use_x0 = torch.cat(
+            [
+                current_x0,
+                self.pilot_samples.unsqueeze(0).expand(B, *self.pilot_samples.shape),
+            ],
+            dim=1,
+        )  # B, K+L+P, *D
         use_ll = (
-            current_ll
-            - 0.5
+            torch.cat(
+                [current_ll, self.pilot_ll.unsqueeze(0).expand(B, *self.pilot_ll.shape)], dim=1
+            )
+            - (0.5 / t_scale**2)
             * torch.sum(
-                (current_x0 - xt.unsqueeze(1)) ** 2 / t_scale**2, dim=tuple(range(2, len(x0.shape)))
-            ).unsqueeze(-1)
-            - torch.log(t_scale)
-        )  # B, K+L, 1
-        print(
-            "convergence",
-            self.check_convergence(
-                use_ll, (current_x0 - xt.unsqueeze(1)) / t_scale**2, t_scale, xt
-            ),
-        )
-        check = self.check_convergence(
-            use_ll, (current_x0 - xt.unsqueeze(1)) / t_scale**2, t_scale, xt
-        )
-        use_ll = torch.exp(use_ll - torch.max(use_ll, dim=1, keepdim=True).values)  # B, K+L, 1
-        w = use_ll / torch.sum(use_ll, dim=tuple(range(1, len(use_ll.shape)))).reshape(
-            B, 1, 1
-        )  # B, K+L, 1
-        w = w.reshape(B, current_x0.shape[1], *[1] * (len(D)))  # B, K+L, *[1]*len(D)
+                (use_x0 - xt.unsqueeze(1)) ** 2,
+                dim=tuple(range(2, len(use_x0.shape))),
+                keepdim=True,
+            )
+            - torch.log(t_scale) * (np.prod(D) if self.use_prodD else 0.0)
+        )  # B, K+L+P, 1
+        check = self.check_convergence(use_ll, (use_x0 - xt.unsqueeze(1)) / t_scale**2, t_scale, xt)
+        use_ll = torch.exp(use_ll - torch.max(use_ll, dim=1, keepdim=True).values)  # B, K+L+P, 1
+        w = use_ll / torch.sum(use_ll, dim=(1, 2), keepdim=True)  # B, K+L+P, 1
+        w = w.reshape(B, use_x0.shape[1], *[1] * (len(D)))  # B, K+L+P, *[1]*len(D)
         return (
-            torch.sum(w * (current_x0 - xt.unsqueeze(1)) / t_scale, dim=1),
+            torch.sum(w * (use_x0 - xt.unsqueeze(1)) / t_scale, dim=1),
             current_x0,
             current_ll,
             check,
@@ -186,6 +180,11 @@ class SpotlightScoreModel(nn.Module):
                 xt.shape[0], 0, *xt.shape[1:], device=xt.device, dtype=xt.dtype
             )
             self.live_ll = torch.zeros(xt.shape[0], 0, 1, device=xt.device, dtype=xt.dtype)
+        if self.pilot_samples is None:
+            self.pilot_samples = self.priormodel.sample(
+                shape=(self.N_auto_pilot, *xt.shape[1:]), N=100, progress_bar=False
+            )
+            self.pilot_ll = vmap(self.likelihood)(self.pilot_samples)
 
         # Compute scores
         while True:
@@ -194,17 +193,18 @@ class SpotlightScoreModel(nn.Module):
             )
 
             if self.live_x0.shape[1] > self.N_live:
-                N = torch.argsort(self.live_ll, dim=1, descending=True)
-                N = N[:, : self.N_live]
-                B, L, *D = self.live_x0.shape
-                L = self.N_live
-                self.live_x0 = torch.gather(
-                    self.live_x0,
-                    1,
-                    N.reshape(B, L, *[1] * (len(D))).expand(B, L, *D),
-                )
-                self.live_ll = torch.gather(self.live_ll, 1, N)
+                self.live_x0 = self.live_x0[:, self.live_x0.shape[1] - self.N_live :]
+                self.live_ll = self.live_ll[:, self.live_ll.shape[1] - self.N_live :]
+                # N = torch.argsort(self.live_ll, dim=1, descending=False)
+                # N = N[:, : self.N_live]
+                # B, L, *D = self.live_x0.shape
+                # L = self.N_live
+                # self.live_x0 = torch.gather(
+                #     self.live_x0,
+                #     1,
+                #     N.reshape(B, L, *[1] * (len(D))).expand(B, L, *D),
+                # )
+                # self.live_ll = torch.gather(self.live_ll, 1, N)
             if check or True:
                 break
-            print("repeat")
         return scores

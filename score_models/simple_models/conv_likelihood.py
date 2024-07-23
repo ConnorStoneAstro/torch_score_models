@@ -410,11 +410,10 @@ class PriorNormalScoreModel(nn.Module):
     the gradients to the correct form.
     """
 
-    def __init__(self, sde, priormodel, t_sigma):
+    def __init__(self, sde, priormodel):
         super().__init__()
         self.sde = sde
         self.priormodel = priormodel
-        self.t_sigma = t_sigma
         self.hyperparameters = {"nn_is_energy": True}
 
     @torch.no_grad()
@@ -425,8 +424,6 @@ class PriorNormalScoreModel(nn.Module):
 
         Normal_score = (xf - xt) / (sigma_f**2 + sigma_t**2)
 
-        t_c = self.t_sigma(torch.sqrt(sigma_c2)) * torch.ones_like(t)
-
-        Prior_score = self.priormodel(t_c, xc) * sigma_f**2 / (sigma_f**2 + sigma_t**2)
-
-        return (Prior_score + Normal_score) * self.sde.sigma(t[0])
+        t_c = self.priormodel.sde.t_sigma(torch.sqrt(sigma_c2)) * torch.ones_like(t)
+        Prior_score = self.priormodel.score(t_c, xc) * sigma_c2 / sigma_t**2
+        return (Prior_score + Normal_score) * self.priormodel.sde.sigma(t[0])
