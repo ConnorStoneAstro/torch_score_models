@@ -23,9 +23,9 @@ class TweedieScoreModel(nn.Module):
         self.hyperparameters = {"nn_is_energy": True}
 
     def tweedie(self, t, xt):
-        t_scale = self.sde.sigma(t)
+        sigma_t = self.sde.sigma(t)
         t_mu = self.sde.mu(t)
-        x0 = (xt + t_scale.unsqueeze(-1) ** 2 * self.model.score(t, xt)) / t_mu.unsqueeze(-1)
+        x0 = (xt + sigma_t.unsqueeze(-1) ** 2 * self.model.score(t, xt)) / t_mu.unsqueeze(-1)
         return x0
 
     def log_likelihood_score0(self, t, x0):
@@ -39,6 +39,6 @@ class TweedieScoreModel(nn.Module):
 
     def forward(self, t, xt, *args, **kwargs):
 
-        t_scale = self.sde.sigma(t[0])
+        sigma_t = self.sde.sigma(t[0])
         (scores,) = self.log_likelihood_score(t, xt)
-        return scores * t_scale
+        return scores * sigma_t
