@@ -40,7 +40,7 @@ class SpotlightScoreModel(nn.Module):
         N_live=100,
         K=lambda t: 10,
         epsilon=0.5,
-        use_prodD=True,
+        # use_prodD=True,
     ):
         super().__init__()
         self.sde = sde
@@ -59,9 +59,9 @@ class SpotlightScoreModel(nn.Module):
         self.live_x0 = None
         self.live_ll = None
         self.epsilon = epsilon
-        self.use_prodD = use_prodD
+        # self.use_prodD = use_prodD
 
-    def check_convergence(self, ll, scores, t_scale, xt):
+    def check_convergence(self, ll, scores, sigma_t, xt):
         B, K, *D = scores.shape
 
         N = torch.argsort(ll, dim=1, descending=True)
@@ -80,19 +80,19 @@ class SpotlightScoreModel(nn.Module):
         print(
             torch.sum(
                 torch.linalg.norm(
-                    (sample_score - full_score) * t_scale**2, dim=tuple(range(1, len(D) + 1))
+                    (sample_score - full_score) * sigma_t**2, dim=tuple(range(1, len(D) + 1))
                 )
-                < (self.epsilon * np.sqrt(np.prod(D)) * t_scale)
+                < (self.epsilon * np.sqrt(np.prod(D)) * sigma_t)
             )
         )
         return torch.all(
             torch.linalg.norm(
-                (sample_score - full_score) * t_scale**2, dim=tuple(range(1, len(D) + 1))
+                (sample_score - full_score) * sigma_t**2, dim=tuple(range(1, len(D) + 1))
             )
-            < (np.sqrt(np.prod(D)) * t_scale),
+            < (np.sqrt(np.prod(D)) * sigma_t),
         )
 
-    # def check_convergence(self, ll, scores, t_scale, N_samples=100):
+    # def check_convergence(self, ll, scores, sigma_t, N_samples=100):
     #     B, K, *D = scores.shape
 
     #     bootstrap_scores = torch.zeros(B, N_samples, *D, device=scores.device, dtype=scores.dtype)
@@ -108,15 +108,19 @@ class SpotlightScoreModel(nn.Module):
     #         bootstrap_scores[:, n, :] = torch.sum(sample_scores * sample_ll, dim=1)
 
     #     sigma_v = torch.std(bootstrap_scores, dim=1)
-    #     return torch.all(sigma_v < self.epsilon * t_scale, dim=1)
+    #     return torch.all(sigma_v < self.epsilon * sigma_t, dim=1)
 
-    def spotlight_score(self, t, xt, tfloat, t_scale, live_x0, live_ll):
+    def clear_live_points(self):
+        self.live_x0 = None
+        self.live_ll = None
+
+    def spotlight_score(self, t, xt, tfloat, sigma_t, live_x0, live_ll):
         K = self.K(tfloat)
         B, *D = xt.shape
 
         x0 = vmap(
             lambda xf: self.priornormalmodel.sample(
-                shape=(K, *xt.shape[1:]), N=50, xf=xf, sigma_f=t_scale, progress_bar=False
+                shape=(K, *xt.shape[1:]), N=50, xf=xf, sigma_f=sigma_t, progress_bar=False
             ),
             randomness="different",
         )(
@@ -130,12 +134,11 @@ class SpotlightScoreModel(nn.Module):
             [
                 live_ll,
                 ll
-                + (0.5 / t_scale**2)
+                + (0.5 / sigma_t**2)
                 * torch.sum(
                     (x0 - xt.unsqueeze(1)) ** 2, dim=tuple(range(2, len(x0.shape))), keepdim=True
-                )
-                + torch.log(t_scale)
-                * (np.prod(D) if self.use_prodD else 0.0),  # fixme why not np.prod(D)?
+                ),
+                # + torch.log(sigma_t) * np.prod(D),  # fixme why not this term?
             ],
             dim=1,
         )  # B, K+L, 1
@@ -150,20 +153,20 @@ class SpotlightScoreModel(nn.Module):
             torch.cat(
                 [current_ll, self.pilot_ll.unsqueeze(0).expand(B, *self.pilot_ll.shape)], dim=1
             )
-            - (0.5 / t_scale**2)
+            - (0.5 / sigma_t**2)
             * torch.sum(
                 (use_x0 - xt.unsqueeze(1)) ** 2,
                 dim=tuple(range(2, len(use_x0.shape))),
                 keepdim=True,
             )
-            - torch.log(t_scale) * (np.prod(D) if self.use_prodD else 0.0)
+            # - torch.log(sigma_t) * np.prod(D) # fixme why not this term?
         )  # B, K+L+P, 1
-        check = self.check_convergence(use_ll, (use_x0 - xt.unsqueeze(1)) / t_scale**2, t_scale, xt)
+        check = self.check_convergence(use_ll, (use_x0 - xt.unsqueeze(1)) / sigma_t**2, sigma_t, xt)
         use_ll = torch.exp(use_ll - torch.max(use_ll, dim=1, keepdim=True).values)  # B, K+L+P, 1
         w = use_ll / torch.sum(use_ll, dim=(1, 2), keepdim=True)  # B, K+L+P, 1
         w = w.reshape(B, use_x0.shape[1], *[1] * (len(D)))  # B, K+L+P, *[1]*len(D)
         return (
-            torch.sum(w * (use_x0 - xt.unsqueeze(1)) / t_scale, dim=1),
+            torch.sum(w * (use_x0 - xt.unsqueeze(1)) / sigma_t, dim=1),
             current_x0,
             current_ll,
             check,
@@ -172,7 +175,7 @@ class SpotlightScoreModel(nn.Module):
     @torch.no_grad()
     def forward(self, t, xt, **kwargs):
         tfloat = t[0].item()
-        t_scale = self.sde.sigma(t[0])
+        sigma_t = self.sde.sigma(t[0])
 
         # Make initialization of live points if this is first step
         if self.live_x0 is None:
@@ -189,7 +192,7 @@ class SpotlightScoreModel(nn.Module):
         # Compute scores
         while True:
             scores, self.live_x0, self.live_ll, check = self.spotlight_score(
-                t, xt, tfloat, t_scale, self.live_x0, self.live_ll
+                t, xt, tfloat, sigma_t, self.live_x0, self.live_ll
             )
 
             if self.live_x0.shape[1] > self.N_live:

@@ -31,8 +31,8 @@ class MVGScoreModel(nn.Module):
             cov.shape[-1], dtype=cov.dtype, device=cov.device
         )
         icov = torch.linalg.inv(cov_t)
-        det = torch.linalg.det(cov_t)
-        ll = -0.5 * (r @ icov @ r.reshape(1, -1).T) - 0.5 * torch.log(det) + torch.log(w)
+        logdet = torch.logdet(cov_t)
+        ll = -0.5 * (r @ icov @ r.reshape(1, -1).T) - 0.5 * logdet + torch.log(w)
         return ll.unsqueeze(0)
 
     def forward_single(self, t, x, **kwargs):
