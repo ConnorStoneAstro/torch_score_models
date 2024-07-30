@@ -26,7 +26,7 @@ class MVGScoreModel(nn.Module):
             raise ValueError("mean must be 1D (single Gaussian) or 2D (mixture of Gaussians)")
 
     def ll(self, t, x, mu, cov, w):
-        r = x.squeeze() - mu
+        r = (x.squeeze() - self.sde.mu(t) * mu).flatten()
         cov_t = self.sde.mu(t) ** 2 * cov + self.sde.sigma(t) ** 2 * torch.eye(
             cov.shape[-1], dtype=cov.dtype, device=cov.device
         )
