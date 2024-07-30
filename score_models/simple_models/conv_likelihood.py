@@ -279,7 +279,11 @@ class ConvolvedPriorApproximation(nn.Module):
             else:
                 self.ATS1A_full = (
                     self.A.T
-                    @ torch.linalg.inv(Sigma_y + l_damp**2 * torch.eye(Sigma_y.shape[0]))
+                    @ torch.linalg.inv(
+                        Sigma_y
+                        + l_damp**2
+                        * torch.eye(Sigma_y.shape[0], dtype=Sigma_y.dtype, device=Sigma_y.device)
+                    )
                     @ self.A
                 )
         else:
@@ -293,7 +297,11 @@ class ConvolvedPriorApproximation(nn.Module):
             else:
                 self.ATS1y = (
                     self.A.T
-                    @ torch.linalg.inv(Sigma_y + l_damp**2 * torch.eye(Sigma_y.shape[0]))
+                    @ torch.linalg.inv(
+                        Sigma_y
+                        + l_damp**2
+                        * torch.eye(Sigma_y.shape[0], dtype=Sigma_y.dtype, device=Sigma_y.device)
+                    )
                     @ y.reshape(-1)
                 ).reshape(*self.x_shape)
         else:
@@ -375,7 +383,10 @@ class ConvolvedPriorApproximation(nn.Module):
             Sigma_c = (1 / (self.ATS1A_full + 1 / sigma_t**2)).reshape(*self.x_shape)
         else:
             Sigma_c = torch.linalg.inv(
-                self.ATS1A_full + 1 / sigma_t**2 * torch.eye(self.ATS1A_full.shape[0])
+                self.ATS1A_full
+                + 1
+                / sigma_t**2
+                * torch.eye(self.ATS1A_full.shape[0], dtype=xt.dtype, device=xt.device)
             )
         # print(
         #     "Sigma_c",

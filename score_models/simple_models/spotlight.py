@@ -102,7 +102,7 @@ class SpotlightScoreModel(nn.Module):
         K = self.K(tfloat)
         B, *D = xt.shape
 
-        # Sample P(x0|xt) = P(x) N(x|xt,sigma_t^2) / P(xt)
+        # Sample P(x0|xt) = P(x0) N(x0|xt,sigma_t^2) / P(xt)
         t_c = self.priormodel.sde.t_sigma(sigma_t).item()
         N = int(100 * t_c + 28)  # fewer steps needed when t_c is small
         x0 = self.solver.reverse(
