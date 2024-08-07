@@ -243,6 +243,7 @@ class ConvolvedPriorApproximation(nn.Module):
         f: Optional[Callable] = None,
         l_damp: float = 0.0,
         y_damp: float = 0.0,
+        use_diag=False,
         diag: bool = False,
         AAT: Optional[Tensor] = None,
         ATS1A: Optional[Tensor] = None,
@@ -259,11 +260,9 @@ class ConvolvedPriorApproximation(nn.Module):
         self.l_damp = l_damp
         self.y_damp = y_damp
         if diag:
-            self.Sigma_y = Sigma_y + y_damp**2
+            self.Sigma_y = Sigma_y
         else:
-            self.Sigma_y = Sigma_y + y_damp**2 * torch.eye(
-                Sigma_y.shape[0], dtype=Sigma_y.dtype, device=Sigma_y.device
-            )
+            self.Sigma_y = Sigma_y
         self.gauss_approx_time = gauss_approx_time
         self.gauss_approx_scale = gauss_approx_scale
         self.f = f
@@ -279,38 +278,66 @@ class ConvolvedPriorApproximation(nn.Module):
                 self.AAT = self.A @ self.A.T
         else:
             self.AAT = AAT
-        print(self.AAT)
         if ATS1A is None:
             if diag:
-                self.ATS1A = torch.sum(self.A**2 / Sigma_y.reshape(-1, 1), dim=0) + l_damp**2
+                self.ATS1A = torch.sum(self.A**2 / (Sigma_y.reshape(-1, 1) + y_damp**2), dim=0)
             else:
                 self.ATS1A = (
-                    self.A.T @ torch.linalg.inv(Sigma_y) @ self.A
-                ) + l_damp**2 * torch.eye(
-                    np.prod(x_shape), dtype=Sigma_y.dtype, device=Sigma_y.device
+                    self.A.T
+                    @ torch.linalg.inv(
+                        Sigma_y
+                        + y_damp**2
+                        * torch.eye(Sigma_y.shape[0], dtype=Sigma_y.dtype, device=Sigma_y.device)
+                    )
+                    @ self.A
                 )
 
         else:
             self.ATS1A = ATS1A
-        print(self.ATS1A)
-        if ATS1y is None:
-            if Sigma_y.shape == y.shape:
-                self.ATS1y = (self.A.T @ (y.reshape(-1) / Sigma_y.reshape(-1))).reshape(
-                    *self.x_shape
-                )
+
+        if diag:
+            if use_diag:
+                self.ATS1A_diag = self.ATS1A
             else:
-                self.ATS1y = (self.A.T @ torch.linalg.inv(Sigma_y) @ y.reshape(-1)).reshape(
-                    *self.x_shape
-                )
+                self.ATS1A_diag = 1
+        else:
+            if use_diag:
+                self.ATS1A_diag = torch.diag(self.ATS1A)
+            else:
+                self.ATS1A_diag = 1
+
+        if ATS1y is None:
+            if diag:
+                self.ATS1y = (
+                    self.A.T @ (y.reshape(-1) / (Sigma_y.reshape(-1) + y_damp**2))
+                ).reshape(*self.x_shape)
+            else:
+                self.ATS1y = (
+                    self.A.T
+                    @ torch.linalg.inv(
+                        Sigma_y
+                        + y_damp**2
+                        * torch.eye(Sigma_y.shape[0], dtype=Sigma_y.dtype, device=Sigma_y.device)
+                    )
+                    @ y.reshape(-1)
+                ).reshape(*self.x_shape)
         else:
             self.ATS1y = ATS1y
         if A1y is None:
             if diag:
-                self.A1y = self.ATS1y / self.ATS1A.reshape(*self.x_shape)
-            else:
-                self.A1y = (torch.linalg.inv(self.ATS1A) @ self.ATS1y.reshape(-1)).reshape(
-                    *self.x_shape
+                self.A1y = self.ATS1y / (
+                    self.ATS1A.reshape(*self.x_shape) + l_damp**2 * self.ATS1A_diag
                 )
+            else:
+                self.A1y = (
+                    torch.linalg.inv(
+                        self.ATS1A
+                        + l_damp**2
+                        * self.ATS1A_diag
+                        * torch.eye(np.prod(x_shape), dtype=Sigma_y.dtype, device=Sigma_y.device)
+                    )
+                    @ self.ATS1y.reshape(-1)
+                ).reshape(*self.x_shape)
         else:
             self.A1y = A1y
         self.hyperparameters = {"nn_is_energy": True}
@@ -338,33 +365,46 @@ class ConvolvedPriorApproximation(nn.Module):
     def prior_score(self, t, xt, Sigma_c):
         sigma_t = self.sde.sigma(t)
         if self.diag:
-            sigma_c2 = torch.min(Sigma_c)  # sigma_t**2 / (self.ATS1A_scalar * sigma_t**2 + 1.0)
-            L = torch.sqrt(Sigma_c)
-            L1 = 1 / L
+            sigma_c2 = torch.mean(Sigma_c)  # sigma_t**2 / (self.ATS1A_scalar * sigma_t**2 + 1.0)
+            # L = torch.sqrt(Sigma_c)
+            # L1 = 1 / L
         else:
-            sigma_c2 = torch.min(torch.diag(Sigma_c))
-            L = torch.linalg.cholesky(Sigma_c)
-            L1 = torch.linalg.inv(L)
+            sigma_c2 = torch.mean(torch.diag(Sigma_c))
+            # L = torch.linalg.cholesky(Sigma_c)
+            # L1 = torch.linalg.inv(L)
 
         t_c = self.sde.t_sigma(torch.sqrt(sigma_c2)) * torch.ones_like(t)
         if self.diag:
-            x_c = Sigma_c * (self.ATS1y + xt / sigma_t**2)
+            x_c = Sigma_c * (
+                (self.ATS1A + self.l_damp**2 * self.ATS1A_diag) * self.A1y + xt / sigma_t**2
+            )
             return (
-                Sigma_c
-                * torch.sqrt(sigma_c2)
-                * L1
-                * self.priormodel.score(
-                    t_c.unsqueeze(0), torch.sqrt(sigma_c2) * L1 * x_c.unsqueeze(0)
-                ).squeeze(0)
+                self.priormodel.score(t_c.unsqueeze(0), x_c.unsqueeze(0)).squeeze(0)
+                * sigma_c2
                 / sigma_t**2
             )
         else:
-            x_c = (Sigma_c @ ((self.ATS1y).reshape(-1) + xt.reshape(-1) / sigma_t**2)).reshape(
-                *self.x_shape
-            )
-            return (
-                self.priormodel.score(t.unsqueeze(0), x_c.unsqueeze(0)).squeeze(0).reshape(-1)
+            x_c = (
+                Sigma_c
+                @ (
+                    (
+                        self.ATS1A
+                        + self.l_damp**2
+                        * self.ATS1A_diag
+                        * torch.eye(
+                            np.prod(self.x_shape),
+                            dtype=self.Sigma_y.dtype,
+                            device=self.Sigma_y.device,
+                        )
+                    )
+                    @ (self.A1y).reshape(-1)
+                    + xt.reshape(-1) / sigma_t**2
+                )
             ).reshape(*self.x_shape)
+            return (
+                sigma_c2
+                * self.priormodel.score(t_c.unsqueeze(0), x_c.unsqueeze(0)).squeeze(0).reshape(-1)
+            ).reshape(*self.x_shape) / sigma_t**2
 
     @torch.no_grad()
     def forward(self, t, xt, **kwargs):
