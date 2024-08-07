@@ -35,6 +35,7 @@ class SpotlightScoreModel(nn.Module):
         sde,
         priormodel,
         likelihood,
+        prior_std,
         pilot_samples=None,
         pilot_ll=None,
         N_auto_pilot=1,
@@ -49,6 +50,7 @@ class SpotlightScoreModel(nn.Module):
         self.priormodel = priormodel
         self.solver = EM_SDE(self.priormodel)
         self.likelihood = likelihood
+        self.prior_std = prior_std
         self.pilot_samples = pilot_samples  # P, *D
         self.pilot_ll = pilot_ll  # P, 1
         self.N_auto_pilot = N_auto_pilot
@@ -101,6 +103,8 @@ class SpotlightScoreModel(nn.Module):
     def spotlight_score(self, t, xt, tfloat, sigma_t, live_x0, live_ll):
         K = self.K(tfloat)
         B, *D = xt.shape
+        B, L, _ = live_ll.shape
+        B, P, _ = self.pilot_ll.shape
 
         # Sample P(x0|xt) = P(x0) N(x0|xt,sigma_t^2) / P(xt)
         t_c = self.priormodel.sde.t_sigma(sigma_t).item()
@@ -119,7 +123,7 @@ class SpotlightScoreModel(nn.Module):
         current_x0 = torch.cat([live_x0, x0], dim=1)  # B, K+L, *D
 
         # Stop logdet term from getting very large when P(x)N(x|xt,sigma_t^2) is basically equal to P(x)
-        sigma_t_logdet = torch.min(torch.stack([sigma_t, torch.std(x0)]))
+        sigma_t_logdet = torch.min(torch.stack([sigma_t, self.prior_std / 2]))
 
         # Track all likelihoods so far. Include the 1/N(x|xt1,sigma_t1^2) term of the importance weights
         current_ll = torch.cat(
@@ -136,38 +140,45 @@ class SpotlightScoreModel(nn.Module):
         )  # B, K+L, 1
 
         # Add in the pilot samples, now this is what will be used to compute the scores
-        use_x0 = torch.cat([current_x0, self.pilot_samples], dim=1)  # B, K+L+P, *D
+        use_x0 = torch.cat([current_x0, self.pilot_samples], dim=1).reshape(
+            1, B * (K + L + P), *D
+        )  # 1, B*(K+L+P), *D
 
         # Add in the pilot sample likelihoods. Also include N(x|xt2,sigma_t2^2) term of the importance sampling
         use_ll = (
-            torch.cat([current_ll, self.pilot_ll], dim=1)
+            torch.cat([current_ll, self.pilot_ll], dim=1).reshape(1, B * (K + L + P), 1)
             - (0.5 / sigma_t**2)
             * torch.sum(
-                (use_x0 - xt.unsqueeze(1)) ** 2, dim=tuple(range(2, len(use_x0.shape)))
+                (use_x0 - xt.unsqueeze(1)) ** 2,
+                dim=tuple(range(2, len(use_x0.shape))),
             ).unsqueeze(2)
             # - torch.log(sigma_t) * np.prod(D)  # not needed because it is a constant
-        )  # B, K+L+P, 1
-
+        )  # B, B*(K+L+P), 1
         # Check if score is unchanged by dropping highest weighted point
-        check = self.check_convergence(use_ll, (use_x0 - xt.unsqueeze(1)) / sigma_t**2, sigma_t, xt)
+        # check = self.check_convergence(use_ll, (use_x0 - xt.unsqueeze(1)) / sigma_t**2, sigma_t, xt)
 
         # Stable compute of weighted exp(log-likelihood)
-        use_ll = torch.exp(use_ll - torch.max(use_ll, dim=1, keepdim=True).values)  # B, K+L+P, 1
+        use_ll = torch.exp(
+            use_ll - torch.max(use_ll, dim=1, keepdim=True).values
+        )  # B, B*(K+L+P), 1
 
         # Normalize the weights
-        w = use_ll / torch.sum(use_ll, dim=(1, 2), keepdim=True)  # B, K+L+P, 1
+        w = use_ll / torch.sum(use_ll, dim=(1, 2), keepdim=True)  # B, B*(K+L+P), 1
 
         # Reshape to match the samples
-        w = w.reshape(B, use_x0.shape[1], *[1] * (len(D)))  # B, K+L+P, *[1]*len(D)
+        w = w.reshape(B, B * (K + L + P), *[1] * (len(D)))  # B, B*(K+L+P), *[1]*len(D)
 
         # Compute the score as weighted average of individual scores. Also
         # Multiply by sigma_t so this may be wrapped in a ScoreModel object
-        score = torch.sum(w * (use_x0 - xt.unsqueeze(1)) / sigma_t, dim=1)
+        score = torch.sum(
+            w * (use_x0 - xt.unsqueeze(1)) / sigma_t,
+            dim=1,
+        )
         return (
             score,
             current_x0,
             current_ll,
-            check,
+            True,  # check,
         )
 
     @torch.no_grad()
