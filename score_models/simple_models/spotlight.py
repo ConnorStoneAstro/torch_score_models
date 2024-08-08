@@ -140,33 +140,29 @@ class SpotlightScoreModel(nn.Module):
         )  # B, K+L, 1
 
         # Add in the pilot samples, now this is what will be used to compute the scores
-        use_x0 = torch.cat([current_x0, self.pilot_samples], dim=1).reshape(
-            1, B * (K + L + P), *D
-        )  # 1, B*(K+L+P), *D
+        use_x0 = torch.cat([current_x0, self.pilot_samples], dim=1)  # B, K+L+P, *D
 
         # Add in the pilot sample likelihoods. Also include N(x|xt2,sigma_t2^2) term of the importance sampling
         use_ll = (
-            torch.cat([current_ll, self.pilot_ll], dim=1).reshape(1, B * (K + L + P), 1)
+            torch.cat([current_ll, self.pilot_ll], dim=1)
             - (0.5 / sigma_t**2)
             * torch.sum(
                 (use_x0 - xt.unsqueeze(1)) ** 2,
                 dim=tuple(range(2, len(use_x0.shape))),
             ).unsqueeze(2)
             # - torch.log(sigma_t) * np.prod(D)  # not needed because it is a constant
-        )  # B, B*(K+L+P), 1
+        )  # B, K+L+P, 1
         # Check if score is unchanged by dropping highest weighted point
         # check = self.check_convergence(use_ll, (use_x0 - xt.unsqueeze(1)) / sigma_t**2, sigma_t, xt)
 
         # Stable compute of weighted exp(log-likelihood)
-        use_ll = torch.exp(
-            use_ll - torch.max(use_ll, dim=1, keepdim=True).values
-        )  # B, B*(K+L+P), 1
+        use_ll = torch.exp(use_ll - torch.max(use_ll, dim=1, keepdim=True).values)  # B, K+L+P, 1
 
         # Normalize the weights
-        w = use_ll / torch.sum(use_ll, dim=(1, 2), keepdim=True)  # B, B*(K+L+P), 1
+        w = use_ll / torch.sum(use_ll, dim=(1, 2), keepdim=True)  # B, K+L+P, 1
 
         # Reshape to match the samples
-        w = w.reshape(B, B * (K + L + P), *[1] * (len(D)))  # B, B*(K+L+P), *[1]*len(D)
+        w = w.reshape(B, K + L + P, *[1] * (len(D)))  # B, K+L+P, *[1]*len(D)
 
         # Compute the score as weighted average of individual scores. Also
         # Multiply by sigma_t so this may be wrapped in a ScoreModel object

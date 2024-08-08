@@ -280,7 +280,9 @@ class ConvolvedPriorApproximation(nn.Module):
             self.AAT = AAT
         if ATS1A is None:
             if diag:
-                self.ATS1A = torch.sum(self.A**2 / (Sigma_y.reshape(-1, 1) + y_damp**2), dim=0)
+                self.ATS1A = torch.sum(
+                    self.A**2 / (Sigma_y.reshape(-1, 1) + y_damp**2), dim=0
+                ).reshape(*self.x_shape)
             else:
                 self.ATS1A = (
                     self.A.T
