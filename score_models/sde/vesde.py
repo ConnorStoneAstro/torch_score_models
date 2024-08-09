@@ -1,8 +1,9 @@
 import torch
 from .sde import SDE
 from torch import Tensor
-import numpy as np
+from torch.distributions import Normal, Independent
 from score_models.utils import DEVICE
+import numpy as np
 
 
 class VESDE(SDE):
@@ -19,23 +20,29 @@ class VESDE(SDE):
         super().__init__(**kwargs)
         self.sigma_min = sigma_min
         self.sigma_max = sigma_max
+        self.hyperparameters.update({"sigma_min": sigma_min, "sigma_max": sigma_max})
+
+    def mu(self, t: Tensor) -> Tensor:
+        return torch.ones_like(t)
 
     def sigma(self, t: Tensor) -> Tensor:
-        return self.sigma_min * (self.sigma_max / self.sigma_min) ** (t / self.t_max)
+        return self.sigma_min * (self.sigma_max / self.sigma_min) ** (t / self.T)
 
     def t_sigma(self, sigma: Tensor) -> Tensor:
         return torch.log(torch.as_tensor(sigma / self.sigma_min, device=DEVICE)) / torch.log(
             torch.as_tensor(self.sigma_max / self.sigma_min, device=DEVICE)
         )
 
-    def mu(self, t: Tensor) -> Tensor:
-        return torch.ones_like(t)
-
     def diffusion(self, t: Tensor, x: Tensor) -> Tensor:
         _, *D = x.shape  # broadcast diffusion coefficient to x shape
-        return self.sigma(t).view(-1, *[1] * len(D)) * np.sqrt(
-            2 * (np.log(self.sigma_max) - np.log(self.sigma_min))
-        )
+        # Analytical derivative of the sigma**2 function, square rooted at the end
+        prefactor = np.sqrt(2 * (np.log(self.sigma_max) - np.log(self.sigma_min)))
+        return prefactor * self.sigma(t).view(-1, *[1] * len(D))
 
     def drift(self, t: Tensor, x: Tensor) -> Tensor:
         return torch.zeros_like(x)
+
+    def prior(self, shape, mean=None, device=DEVICE):
+        if mean is None:
+            mean = torch.zeros(shape).to(device)
+        return Independent(Normal(loc=mean, scale=self.sigma_max, validate_args=False), len(shape))

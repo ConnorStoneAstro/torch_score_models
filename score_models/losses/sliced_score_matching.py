@@ -1,6 +1,8 @@
 import torch
 from torch.func import vjp
 
+__all__ = ["sliced_score_matching_loss"]
+
 
 # Kept here for reference, but not currently used
 def time_weighted_sliced_score_matching_loss(

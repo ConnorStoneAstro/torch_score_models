@@ -3,11 +3,13 @@ from typing import Callable, Union
 from torch import Tensor
 from torch.nn import Module
 from torch.func import vjp, jacrev
-from .sde import SDE
-from .score_model import SLIC
-from .utils import DEVICE
+
+from .slic import SLIC
+from ..sde import SDE
+from ..utils import DEVICE
 
 
+# TODO finish this class with Echoes in the Noise work
 class KernelSLIC(SLIC):
     def __init__(
         self,
@@ -39,5 +41,4 @@ class KernelSLIC(SLIC):
         self.kernel = kernel
         self.forward_model = forward_model
 
-    def loss_fn(self, samples: Tensor, *args: list[Tensor]) -> Tensor:
-        ...
+    def loss_fn(self, samples: Tensor, *args: list[Tensor]) -> Tensor: ...
