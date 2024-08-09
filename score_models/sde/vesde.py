@@ -7,7 +7,9 @@ import numpy as np
 
 
 class VESDE(SDE):
-    def __init__(self, sigma_min: float, sigma_max: float, **kwargs):
+    def __init__(
+        self, sigma_min: float, sigma_max: float, T: float = 1.0, epsilon: float = 1e-3, **kwargs
+    ):
         """
         Variance Exploding stochastic differential equation
 
@@ -17,7 +19,7 @@ class VESDE(SDE):
             T (float, optional): The time horizon for the VESDE. Defaults to 1.0.
             device (str, optional): The device to use for computation. Defaults to DEVICE.
         """
-        super().__init__(**kwargs)
+        super().__init__(T=T, epsilon=epsilon, **kwargs)
         self.sigma_min = sigma_min
         self.sigma_max = sigma_max
         self.hyperparameters.update({"sigma_min": sigma_min, "sigma_max": sigma_max})

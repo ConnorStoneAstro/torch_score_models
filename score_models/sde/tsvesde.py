@@ -16,6 +16,8 @@ class TSVESDE(SDE):
         sigma_max: float,
         t_star: float,
         beta: float,
+        T: float = 1.0,
+        epsilon: float = 0.0,
         beta_fn="relu",
         alpha=30,  # silu and hardswish recaling of t
         **kwargs
@@ -31,7 +33,7 @@ class TSVESDE(SDE):
             T (float, optional): The time horizon for the VESDE. Defaults to 1.0.
             device (str, optional): The device to use for computation. Defaults to DEVICE.
         """
-        super().__init__(**kwargs)
+        super().__init__(T, epsilon)
         self.sigma_min = sigma_min
         self.sigma_max = sigma_max
         self.beta = beta
@@ -41,14 +43,12 @@ class TSVESDE(SDE):
         )
 
         if beta_fn == "relu":
-            self.beta_fn = lambda t: -self.beta * F.relu(t / self.t_max - self.t_star)
+            self.beta_fn = lambda t: -self.beta * F.relu(t / self.T - self.t_star)
         elif beta_fn == "swish" or beta_fn == "silu":
-            self.beta_fn = (
-                lambda t: -self.beta * F.silu(alpha * (t / self.t_max - self.t_star)) / alpha
-            )
+            self.beta_fn = lambda t: -self.beta * F.silu(alpha * (t / self.T - self.t_star)) / alpha
         elif beta_fn == "hardswish":
             self.beta_fn = (
-                lambda t: -self.beta * F.hardswish(alpha * (t / self.t_max - self.t_star)) / alpha
+                lambda t: -self.beta * F.hardswish(alpha * (t / self.T - self.t_star)) / alpha
             )
         self.beta_fn_dot = vmap(grad(self.beta_fn))
 
@@ -58,7 +58,7 @@ class TSVESDE(SDE):
         """
         smin = np.log(self.sigma_min)
         smax = np.log(self.sigma_max)
-        log_coeff = self.beta_fn(t) + (smax - smin) * t / self.t_max + smin
+        log_coeff = self.beta_fn(t) + (smax - smin) * t / self.T + smin
         return torch.exp(log_coeff)
 
     def mu(self, t: Tensor) -> Tensor:
@@ -83,3 +83,11 @@ class TSVESDE(SDE):
     def drift(self, t: Tensor, x: Tensor) -> Tensor:
         _, *D = x.shape
         return self.beta_fn_dot(t).view(-1, *[1] * len(D)) * x
+
+    def t_sigma(self, sigma: Tensor) -> Tensor:
+        """
+        Inverse of the sigma function. Should give the time at which the kernel has standard deviation sigma.
+        """
+        raise NotImplementedError(
+            "Inverse of the sigma function is not implemented for the TSVESDE."
+        )

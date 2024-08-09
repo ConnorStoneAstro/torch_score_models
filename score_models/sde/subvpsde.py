@@ -22,6 +22,13 @@ class subVPSDE(SDE):
     def sigma(self, t: Tensor):
         return 1.0 - torch.exp(-self.alpha(t))
 
+    def t_sigma(self, sigma: Tensor):
+        alpha = -torch.log(1.0 - sigma)
+        return (
+            torch.sqrt(self.beta_min**2 + 2 * (self.beta_max - self.beta_min) * alpha)
+            - self.beta_min
+        ) / (self.beta_max - self.beta_min)
+
     def mu(self, t: Tensor):
         return torch.exp(-0.5 * self.alpha(t))
 

@@ -2,16 +2,6 @@ import numpy as np
 import torch
 
 from score_models.sde import VESDE, VPSDE, TSVESDE
-from score_models.solver.sde import EulerMaruyamaSDE
-
-
-class DummyScoreModel:
-    def __init__(self, sde):
-        self.sde = sde
-
-    def __call__(self, t, x):
-        return torch.zeros_like(x)
-
 
 # TODO: make better tests checking for the expected marginals of the trajectories backward and forward
 
@@ -21,10 +11,9 @@ def get_trajectories(sde, B=10, N=100, x0=5, T=1):
     t = torch.zeros(B) + sde.epsilon
     x0 = torch.ones(B) * x0
     x = torch.clone(x0)
-    solver = EulerMaruyamaSDE(DummyScoreModel(sde))
-    trajectories = solver.forward(x, N, trace=True)
+    trajectories = [x]
     marginal_samples = [x]
-    for _ in range(N):
+    for step in range(N):
         t += dt
         f = sde.drift(t, x)
         g = sde.diffusion(t, x)

@@ -71,6 +71,16 @@ class VPSDE(SDE):
                     beta_max * t,  # Linear schedule for regime where cosine is clipped
                 )
 
+            def inv_beta_primitive(beta: Tensor, beta_max, *args) -> Tensor:
+                """
+                The inverse of the beta primitive function.
+                """
+                return torch.where(
+                    beta < beta_max * 2 / np.pi * np.arctan(beta_max / np.pi),
+                    2 / np.pi * torch.arccos(torch.exp(-0.5 * beta)),
+                    beta / beta_max,
+                )
+
         elif schedule == "linear":
 
             def beta_primitive(t: Tensor, beta_max, beta_min) -> Tensor:
@@ -79,9 +89,15 @@ class VPSDE(SDE):
                 """
                 return 0.5 * (beta_max - beta_min) * t**2 + beta_min * t
 
+            def inv_beta_primitive(beta: Tensor, beta_max, beta_min) -> Tensor:
+                return (torch.sqrt(beta_min**2 + 2 * (beta_max - beta_min) * beta) - beta_min) / (
+                    beta_max - beta_min
+                )
+
         else:
             raise ValueError(f"Unknown noise schedule {schedule}")
         self._beta_primitive = beta_primitive
+        self._inv_beta_primitive = inv_beta_primitive
 
     def beta_primitive(self, t: Tensor) -> Tensor:
         return self._beta_primitive(t / self.T, self.beta_max, self.beta_min)
@@ -94,6 +110,10 @@ class VPSDE(SDE):
 
     def sigma(self, t: Tensor) -> Tensor:
         return (1 - self.mu(t) ** 2).sqrt()
+
+    def t_sigma(self, sigma: Tensor) -> Tensor:
+        beta = -2 * torch.log(torch.sqrt(1 - sigma**2))
+        return self._inv_beta_primitive(beta, self.beta_max, self.beta_min) * self.T
 
     def prior(self, shape, device=DEVICE):
         mu = torch.zeros(shape).to(device)

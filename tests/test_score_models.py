@@ -97,11 +97,11 @@ def test_log_likelihood():
 def test_sample_fn():
     net = NCSNpp(1, nf=8, ch_mult=(2, 2))
     score = ScoreModel(net, sigma_min=1e-2, sigma_max=10)
-    score.sample(shape=[5, 1, 16, 16], N=10)
+    score.sample(shape=[5, 1, 16, 16], steps=10)
 
     net = DDPM(1, nf=32, ch_mult=(2, 2))
     score = ScoreModel(net, beta_min=1e-2, beta_max=10)
-    score.sample(shape=[5, 1, 16, 16], N=10)
+    score.sample(shape=[5, 1, 16, 16], steps=10)
 
 
 @pytest.mark.parametrize("anneal_residuals", [True, False])
@@ -139,7 +139,7 @@ def test_loading_different_sdes():
     assert isinstance(score.sde, VESDE)
     assert score.sde.sigma_min == 1e-3
     assert score.sde.sigma_max == 1e2
-    assert score.sde.t_min == 0
+    assert score.sde.t_min == 1e-3
     assert score.sde.t_max == 1
 
     score = ScoreModel(net, sde="tsve", sigma_min=1e-3, sigma_max=1e2, t_star=0.5, beta=10)
