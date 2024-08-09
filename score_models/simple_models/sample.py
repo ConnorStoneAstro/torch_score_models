@@ -1,22 +1,34 @@
 import torch
 import torch.nn as nn
-from torch.nn.functional import avg_pool2d, conv2d
-from torch.func import grad
-from torch import vmap
-import numpy as np
-from torch.func import jacrev
-
-# from matrixkernel import matrix_to_kernel, kernel_to_matrix
-from score_models import RK4_ODE
-from scipy.fft import next_fast_len
+from torch import vmap, Tensor
 
 
 class SampleScoreModel(nn.Module):
+    """
+    A score model based on individual samples.
+
+    This score model class is based on individual samples. The score at a given
+    point is the average of the scores of the individual samples. The scores
+    are calculated as the difference between the sample and the point, weighted
+    by the inverse of the variance of the noise at that point:
+
+    .. math::
+
+        W_i = \\exp\\left(\\frac{-(x - x_i)^2}{\\sigma(t)^2 + \\sigma_{\\min}^2}\\right) \\
+        \\nabla_x \\log p(x) = \\frac{1}{\\sum_i W_i} \\sum_i W_i \\frac{x - x_i}{\\sigma(t)^2 + \\sigma_{\\min}^2}
+
+    Args:
+        sde (SDE): The stochastic differential equation for the score model.
+        samples (Tensor): The samples to use for the score model.
+        sigma_min (float, optional): The minimum value of the standard deviation of the noise term. Defaults to 0.0.
+
+    """
+
     def __init__(
         self,
         sde,
-        samples,
-        sigma_min=0.0,
+        samples: Tensor,
+        sigma_min: float = 0.0,
     ):
         super().__init__()
         self.sde = sde

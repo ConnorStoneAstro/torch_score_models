@@ -2,6 +2,6 @@ from .sbm import *
 from .architectures import *
 from .sde import *
 from .losses import *
-from .solver import *
+from .solver.sde import *
 from .ode import *
 from .simple_models import *

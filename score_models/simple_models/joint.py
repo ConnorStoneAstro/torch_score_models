@@ -4,14 +4,35 @@ import numpy as np
 
 
 class JointScoreModel(nn.Module):
+    """
+    A score model which combines the scores from multiple models.
 
-    def __init__(self, sde, models, x_shapes, model_uses, score_scale=1, **kwargs):
+    This score model class allows for multiple score models to combine their
+    scores arbitrarily. They may share all, some, or none of the model space
+    with the class handling the bookkeeping. The scores from each model (where
+    they use the same model dimensions) are simply summed. The class may also
+    handle multiple inputs, internally they are combined into a single massive
+    concatenated ``x`` vector, when passed to the models the ``x`` vector is
+    split into the appropriate segments ``x_0, x_1, ..., x_n`` and each one is
+    converted into the expected shape (defined by the ``x_shapes`` argument).
+
+    Args:
+        sde: The SDE that the score model is associated with.
+        models: A list of score models.
+        x_shapes: A list of shapes for the x vectors that the models expect.
+            These are the shapes that the flat-concatenated ``x`` vector will
+            be split into.
+        model_uses: A list of lists of integers, where each list is the indices
+            of the x vectors corresponding to ``x_shapes`` that each model uses.
+            If None, the model will be passed the full ``x`` vector.
+    """
+
+    def __init__(self, sde, models, x_shapes, model_uses: list[list[int]], **kwargs):
         super().__init__()
         self.sde = sde
         self.models = models
         self.x_shapes = x_shapes
         self.model_uses = model_uses
-        self.score_scale = score_scale
 
     def split_x(self, x):
         B, D = x.shape
@@ -61,4 +82,4 @@ class JointScoreModel(nn.Module):
                     scores[j] += score
 
         js = self.join_x(scores)
-        return js * self.sde.sigma(t).view(-1, *[1] * len(js.shape[1:])) * self.score_scale
+        return js * self.sde.sigma(t).view(-1, *[1] * len(js.shape[1:]))

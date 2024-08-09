@@ -2,7 +2,7 @@ import numpy as np
 import torch
 
 from score_models.sde import VESDE, VPSDE, TSVESDE
-from score_models.solver import EulerMaruyamaSDE
+from score_models.solver.sde import EulerMaruyamaSDE
 
 
 class DummyScoreModel:

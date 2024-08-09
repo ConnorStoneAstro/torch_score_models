@@ -4,16 +4,31 @@ import numpy as np
 
 
 class AnnealedScoreModel(nn.Module):
+    """
+    Smoothly transitions between two score models as a function of t.
 
-    def __init__(
-        self, sde, approx_model, target_model, beta_scheme="linear", epsilon=0.01, **kwargs
-    ):
+    This score model class allows for the interpolation of the scores between
+    two models. Can be useful when one model is better at capturing the score in
+    the early stages of the SDE and another model is better at capturing the
+    score in the later stages of the SDE.
+
+    Args:
+        sde: The SDE that the score model is associated with.
+        hight_model: The high temperature model.
+        lowt_model: The low temperature model.
+        beta_scheme: The scheme for the beta parameter. Can be "linear", "square",
+            "sqrt", "linear:<i>", "sqrt:<i>", or "sin:<i>". For the "<i>" models
+            the ``i`` parameter can be used to scale the ``t`` input to beta making
+            the transition happen later.
+
+    """
+
+    def __init__(self, sde, hight_model, lowt_model, beta_scheme="linear", **kwargs):
         super().__init__()
         self.sde = sde
-        self.approx_model = approx_model
-        self.target_model = target_model
+        self.hight_model = hight_model
+        self.lowt_model = lowt_model
         self.beta_scheme = beta_scheme
-        self.epsilon = epsilon
 
     def beta(self, t):
         T = (t - self.sde.t_min) / (self.sde.t_max - self.sde.t_min)
@@ -37,9 +52,6 @@ class AnnealedScoreModel(nn.Module):
         B, *D = x.shape
         # Compute the weighted score for each model
         beta = torch.clamp(self.beta(kwargs.get("t_a", t)[0]), 0.0, 1.0)
-        score = torch.zeros_like(x)
-        if beta.item() > self.epsilon:
-            score += self.approx_model(t, x, **kwargs) * beta
-        if beta.item() < (1 - self.epsilon):
-            score += self.target_model(t, x, **kwargs) * (1.0 - beta)
+        score = self.hight_model(t, x, **kwargs) * beta
+        score += self.lowt_model(t, x, **kwargs) * (1.0 - beta)
         return score * self.sde.sigma(t).view(-1, *[1] * len(D))

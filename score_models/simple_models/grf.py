@@ -3,18 +3,28 @@ import torch.nn as nn
 
 
 class GRFScoreModel(nn.Module):
-    def __init__(self, sde, power_spectrum, dims=2):
+    """
+    Gaussian random field score model.
+
+    Computes the energy for a gaussian random field based on a provided power spectrum.
+
+    Args:
+        sde: The SDE that the score model is associated with.
+        power_spectrum: The power spectrum of the Gaussian random field.
+    """
+
+    def __init__(self, sde, power_spectrum):
         super().__init__()
         self.sde = sde
         # Store the power spectrum
         self.power_spectrum = power_spectrum
-        self.dims = dims
-        if dims == 1:
+        self.dims = len(power_spectrum.shape)
+        if self.dims == 1:
             self.fft = torch.fft.fft
-        elif dims == 2:
+        elif self.dims == 2:
             self.fft = torch.fft.fft2
         else:
-            raise ValueError("Only 1D and 2D images are supported")
+            raise ValueError("Only 1D and 2D power spectrums are supported")
         self.hyperparameters = {"nn_is_energy": True}
 
     def forward(self, t, x, **kwargs):
